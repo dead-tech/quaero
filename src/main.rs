@@ -1,8 +1,9 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::fs::DirEntry;
 use std::path::Path;
 
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FileType {
     Directory,
     RegularFile,
@@ -18,7 +19,11 @@ struct ParsedEntry {
 impl From<DirEntry> for ParsedEntry {
     fn from(entry: DirEntry) -> Self {
         let file_type = entry.file_type().unwrap();
-        let file_type = match (file_type.is_dir(), file_type.is_file(), file_type.is_symlink()) {
+        let file_type = match (
+            file_type.is_dir(),
+            file_type.is_file(),
+            file_type.is_symlink(),
+        ) {
             (true, false, false) => FileType::Directory,
             (false, true, false) => FileType::RegularFile,
             (false, false, true) => FileType::SymLink,
@@ -33,14 +38,13 @@ impl From<DirEntry> for ParsedEntry {
     }
 }
 
-
 fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry)) -> Result<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::from(entry?);
 
         match entry.file_type {
             FileType::Directory => walk_directory(entry.path, callback)?,
-            FileType::RegularFile | FileType::SymLink => callback(&entry),
+            _ => callback(&entry),
         }
     }
 
@@ -54,20 +58,26 @@ struct Cli {
     target: String,
 
     /// Directory from where to start searching
-    start_directory: Option<String>,
+    #[clap(default_value = ".")]
+    start_directory: String,
+
+    /// File type to look for
+    #[clap(long, short, value_enum, default_value_t = FileType::RegularFile)]
+    file_type: FileType,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let target = cli.target;
-    let start_directory = cli.start_directory.as_deref().unwrap_or(".");
+    let start_directory = cli.start_directory;
+    let target_type = cli.file_type;
 
     // Now we need to walk the current working directory
     // and try to find any file that matches target.
-    walk_directory(start_directory, &|entry: &ParsedEntry | {
-        if entry.name == *target {
-            println!( "Found {} in {}", target, entry.path);
+    walk_directory(start_directory, &|entry: &ParsedEntry| {
+        if entry.name == *target && entry.file_type == target_type {
+            println!("Found {} in {}", target, entry.path);
         }
     })?;
 
