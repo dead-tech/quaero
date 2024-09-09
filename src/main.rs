@@ -10,9 +10,16 @@ enum FileModeMask {
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FileType {
+    #[clap(name = "dir")]
     Directory,
+
+    #[clap(name = "file")]
     RegularFile,
+    
+    #[clap(name = "link")]
     SymLink,
+
+    #[clap(name = "exec")]
     Executable,
 }
 
@@ -173,6 +180,11 @@ fn deduce_search_mode(
         }
     }
 }
+
+// TODO:
+//   #1: Extension matching
+//   #2: Raw output to be able to do command piping?
+//   #4: Maximum recursion depth
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
