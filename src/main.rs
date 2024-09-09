@@ -35,10 +35,12 @@ impl From<DirEntry> for ParsedEntry {
             (false, false, true) => FileType::SymLink,
             _ => unreachable!(),
         };
-            
+
         let permissions = entry.metadata().unwrap().permissions();
-        if file_type != FileType::Directory && permissions.mode() & FileModeMask::Executable as u32 != 0 {
-            file_type = FileType::Executable 
+        if file_type != FileType::Directory
+            && permissions.mode() & FileModeMask::Executable as u32 != 0
+        {
+            file_type = FileType::Executable
         }
 
         Self {
@@ -65,19 +67,59 @@ fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry))
     Ok(())
 }
 
+enum SearchMode {
+    Target,
+    Type,
+    TargetAndType,
+}
+
+fn match_target(target: &String, entry: &ParsedEntry) {
+    if entry.name == *target {
+        println!("Found {} in {}", target, entry.path);
+    }
+}
+
+fn match_type(target_type: &FileType, entry: &ParsedEntry) {
+    if entry.file_type == *target_type {
+        println!("Found {} in {}", entry.name, entry.path);
+    }
+}
+
+fn match_target_and_type(target: &String, target_type: &FileType, entry: &ParsedEntry) {
+    if entry.name == *target && entry.file_type == *target_type {
+        println!("Found {} in {}", target, entry.path);
+    }
+}
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
     /// Target to find
-    target: String,
+    target: Option<String>,
 
     /// Directory from where to start searching
     #[clap(default_value = ".")]
     start_directory: String,
 
     /// File type to look for
-    #[clap(long, short, value_enum, default_value_t = FileType::RegularFile)]
-    file_type: FileType,
+    #[clap(long, short, value_enum)]
+    file_type: Option<FileType>,
+}
+
+fn infer_search_mode(
+    target: &Option<String>,
+    target_type: &Option<FileType>,
+) -> Result<SearchMode> {
+    match (target, target_type) {
+        (Some(_), None) => return Ok(SearchMode::Target),
+        (None, Some(_)) => return Ok(SearchMode::Type),
+        (Some(_), Some(_)) => return Ok(SearchMode::TargetAndType),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Either a target to find or a file type to search must be specified"
+            ))
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -87,9 +129,13 @@ fn main() -> Result<()> {
     let start_directory = cli.start_directory;
     let target_type = cli.file_type;
 
-    walk_directory(start_directory, &|entry: &ParsedEntry| {
-        if entry.name == *target && entry.file_type == target_type {
-            println!("Found {} in {}", target, entry.path);
+    let search_mode = infer_search_mode(&target, &target_type)?;
+
+    walk_directory(start_directory, &|entry: &ParsedEntry| match search_mode {
+        SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
+        SearchMode::Type => match_type(&target_type.unwrap(), entry),
+        SearchMode::TargetAndType => {
+            match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
         }
     })?;
 
