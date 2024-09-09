@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::fs::DirEntry;
+use anyhow::Result;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -12,7 +13,7 @@ fn dir_entry_path<'a>(dir_entry: &DirEntry) -> String {
     dir_entry.path().into_os_string().into_string().unwrap()
 }
 
-fn visit_directory(directory: &str, callback: &dyn Fn(&DirEntry)) -> Result<(), std::io::Error> {
+fn visit_directory(directory: &str, callback: &dyn Fn(&DirEntry)) -> Result<()> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -28,7 +29,7 @@ fn visit_directory(directory: &str, callback: &dyn Fn(&DirEntry)) -> Result<(), 
     Ok(())
 }
 
-fn main() -> Result<(), std::io::Error> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let target = cli.target;
