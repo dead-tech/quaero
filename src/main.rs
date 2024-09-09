@@ -3,13 +3,6 @@ use clap::Parser;
 use std::fs::DirEntry;
 use std::path::Path;
 
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
-struct Cli {
-    /// Target to find
-    target: String,
-}
-
 enum FileType {
     Directory,
     RegularFile,
@@ -54,14 +47,25 @@ fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry))
     Ok(())
 }
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Target to find
+    target: String,
+
+    /// Directory from where to start searching
+    start_directory: Option<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let target = cli.target;
+    let start_directory = cli.start_directory.as_deref().unwrap_or(".");
 
     // Now we need to walk the current working directory
     // and try to find any file that matches target.
-    walk_directory(".", &|entry: &ParsedEntry | {
+    walk_directory(start_directory, &|entry: &ParsedEntry | {
         if entry.name == *target {
             println!( "Found {} in {}", target, entry.path);
         }
