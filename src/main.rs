@@ -16,9 +16,10 @@ enum FileType {
     Executable,
 }
 
-impl From<&DirEntry> for FileType {
-    fn from(entry: &DirEntry) -> Self {
-        let file_type = entry.file_type().unwrap();
+impl TryFrom<&DirEntry> for FileType {
+    fn try_from(entry: &DirEntry) -> Result<Self> {
+        let file_type = entry.file_type()?;
+
         let mut file_type = match (
             file_type.is_dir(),
             file_type.is_file(),
@@ -30,15 +31,17 @@ impl From<&DirEntry> for FileType {
             _ => unreachable!(),
         };
 
-        let permissions = entry.metadata().unwrap().permissions();
+        let permissions = entry.metadata()?.permissions();
         if file_type != FileType::Directory
             && permissions.mode() & FileModeMask::Executable as u32 != 0
         {
             file_type = FileType::Executable;
         }
 
-        file_type
+        Ok(file_type)
     }
+
+    type Error = anyhow::Error;
 }
 
 struct ParsedEntry {
@@ -48,9 +51,11 @@ struct ParsedEntry {
     display_path: PathBuf,
 }
 
-impl From<DirEntry> for ParsedEntry {
-    fn from(entry: DirEntry) -> Self {
-        let file_type = FileType::from(&entry);
+impl TryFrom<DirEntry> for ParsedEntry {
+    type Error = anyhow::Error;
+
+    fn try_from(entry: DirEntry) -> Result<Self> {
+        let file_type = FileType::try_from(&entry)?;
 
         let display_path = match file_type {
             FileType::Directory => {
@@ -62,18 +67,18 @@ impl From<DirEntry> for ParsedEntry {
             _ => entry.path(),
         };
 
-        Self {
+        Ok(Self {
             file_type,
             name: entry.file_name().into_string().unwrap(),
             path: entry.path().into_os_string().into_string().unwrap(),
             display_path,
-        }
+        })
     }
 }
 
 fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry)) -> Result<()> {
     for entry in std::fs::read_dir(directory)? {
-        let entry = ParsedEntry::from(entry?);
+        let entry = ParsedEntry::try_from(entry?)?;
 
         callback(&entry);
         if entry.file_type == FileType::Directory {
