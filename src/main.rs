@@ -1,13 +1,19 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::fs::DirEntry;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+
+enum FileModeMask {
+    Executable = 0o111,
+}
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FileType {
     Directory,
     RegularFile,
     SymLink,
+    Executable,
 }
 
 struct ParsedEntry {
@@ -19,7 +25,7 @@ struct ParsedEntry {
 impl From<DirEntry> for ParsedEntry {
     fn from(entry: DirEntry) -> Self {
         let file_type = entry.file_type().unwrap();
-        let file_type = match (
+        let mut file_type = match (
             file_type.is_dir(),
             file_type.is_file(),
             file_type.is_symlink(),
@@ -29,6 +35,11 @@ impl From<DirEntry> for ParsedEntry {
             (false, false, true) => FileType::SymLink,
             _ => unreachable!(),
         };
+            
+        let permissions = entry.metadata().unwrap().permissions();
+        if file_type != FileType::Directory && permissions.mode() & FileModeMask::Executable as u32 != 0 {
+            file_type = FileType::Executable 
+        }
 
         Self {
             file_type,
@@ -42,6 +53,9 @@ fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry))
     for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::from(entry?);
 
+        // FIXME: we should call the callback also on directories
+        // before traversing the latter, because we might be looking
+        // for a directory.
         match entry.file_type {
             FileType::Directory => walk_directory(entry.path, callback)?,
             _ => callback(&entry),
@@ -73,8 +87,6 @@ fn main() -> Result<()> {
     let start_directory = cli.start_directory;
     let target_type = cli.file_type;
 
-    // Now we need to walk the current working directory
-    // and try to find any file that matches target.
     walk_directory(start_directory, &|entry: &ParsedEntry| {
         if entry.name == *target && entry.file_type == target_type {
             println!("Found {} in {}", target, entry.path);
