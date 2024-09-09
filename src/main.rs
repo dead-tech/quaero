@@ -136,7 +136,7 @@ struct Cli {
     start_directory: String,
 
     /// File type to look for
-    #[clap(long, short, value_enum)]
+    #[clap(name = "type", long, short, value_enum)]
     file_type: Option<FileType>,
 }
 
