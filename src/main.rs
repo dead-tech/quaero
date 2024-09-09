@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::fs::DirEntry;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 enum FileModeMask {
     Executable = 0o111,
@@ -16,14 +16,8 @@ enum FileType {
     Executable,
 }
 
-struct ParsedEntry {
-    file_type: FileType,
-    name: String,
-    path: String,
-}
-
-impl From<DirEntry> for ParsedEntry {
-    fn from(entry: DirEntry) -> Self {
+impl From<&DirEntry> for FileType {
+    fn from(entry: &DirEntry) -> Self {
         let file_type = entry.file_type().unwrap();
         let mut file_type = match (
             file_type.is_dir(),
@@ -40,13 +34,39 @@ impl From<DirEntry> for ParsedEntry {
         if file_type != FileType::Directory
             && permissions.mode() & FileModeMask::Executable as u32 != 0
         {
-            file_type = FileType::Executable
+            file_type = FileType::Executable;
         }
+
+        file_type
+    }
+}
+
+struct ParsedEntry {
+    file_type: FileType,
+    name: String,
+    path: String,
+    display_path: PathBuf,
+}
+
+impl From<DirEntry> for ParsedEntry {
+    fn from(entry: DirEntry) -> Self {
+        let file_type = FileType::from(&entry);
+
+        let display_path = match file_type {
+            FileType::Directory => {
+                let path = entry.path();
+                let mut components = path.components();
+                components.next_back();
+                components.as_path().to_path_buf()
+            }
+            _ => entry.path(),
+        };
 
         Self {
             file_type,
             name: entry.file_name().into_string().unwrap(),
             path: entry.path().into_os_string().into_string().unwrap(),
+            display_path,
         }
     }
 }
@@ -55,12 +75,9 @@ fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry))
     for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::from(entry?);
 
-        // FIXME: we should call the callback also on directories
-        // before traversing the latter, because we might be looking
-        // for a directory.
-        match entry.file_type {
-            FileType::Directory => walk_directory(entry.path, callback)?,
-            _ => callback(&entry),
+        callback(&entry);
+        if entry.file_type == FileType::Directory {
+            walk_directory(entry.path, callback)?;
         }
     }
 
@@ -75,19 +92,31 @@ enum SearchMode {
 
 fn match_target(target: &String, entry: &ParsedEntry) {
     if entry.name == *target {
-        println!("Found {} in {}", target, entry.path);
+        println!(
+            "Found {} in {}",
+            target,
+            entry.display_path.to_str().unwrap()
+        );
     }
 }
 
 fn match_type(target_type: &FileType, entry: &ParsedEntry) {
     if entry.file_type == *target_type {
-        println!("Found {} in {}", entry.name, entry.path);
+        println!(
+            "Found {} in {}",
+            entry.name,
+            entry.display_path.to_str().unwrap()
+        );
     }
 }
 
 fn match_target_and_type(target: &String, target_type: &FileType, entry: &ParsedEntry) {
     if entry.name == *target && entry.file_type == *target_type {
-        println!("Found {} in {}", target, entry.path);
+        println!(
+            "Found {} in {}",
+            target,
+            entry.display_path.to_str().unwrap()
+        );
     }
 }
 
