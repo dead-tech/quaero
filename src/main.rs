@@ -76,13 +76,27 @@ impl TryFrom<DirEntry> for ParsedEntry {
     }
 }
 
-fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry)) -> Result<()> {
-    for entry in std::fs::read_dir(directory)? {
+fn walk_directory<T: AsRef<Path>>(
+    directory: T,
+    excludes: &Option<Vec<PathBuf>>,
+    callback: &dyn Fn(&ParsedEntry),
+) -> Result<()> {
+    'outer: for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::try_from(entry?)?;
+
+        if let Some(excludes) = excludes {
+            for exclude in excludes {
+                let lhs = std::fs::canonicalize(&entry.path)?;
+                let rhs = std::fs::canonicalize(exclude)?;
+                if lhs.starts_with(rhs) {
+                    continue 'outer;
+                }
+            }
+        }
 
         callback(&entry);
         if entry.file_type == FileType::Directory {
-            walk_directory(entry.path, callback)?;
+            walk_directory(entry.path, excludes, callback)?;
         }
     }
 
@@ -138,6 +152,10 @@ struct Cli {
     /// File type to look for
     #[clap(name = "type", long, short, value_enum)]
     file_type: Option<FileType>,
+
+    /// Directories to avoid
+    #[clap(name = "exclude", long, short, num_args = 0.., value_delimiter = ' ')]
+    excludes: Option<Vec<PathBuf>>,
 }
 
 fn deduce_search_mode(
@@ -162,16 +180,21 @@ fn main() -> Result<()> {
     let target = cli.target;
     let start_directory = cli.start_directory;
     let target_type = cli.file_type;
+    let excludes = cli.excludes;
 
     let search_mode = deduce_search_mode(&target, &target_type)?;
 
-    walk_directory(start_directory, &|entry: &ParsedEntry| match search_mode {
-        SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
-        SearchMode::Type => match_type(&target_type.unwrap(), entry),
-        SearchMode::TargetAndType => {
-            match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
-        }
-    })?;
+    walk_directory(
+        start_directory,
+        &excludes,
+        &|entry: &ParsedEntry| match search_mode {
+            SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
+            SearchMode::Type => match_type(&target_type.unwrap(), entry),
+            SearchMode::TargetAndType => {
+                match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
+            }
+        },
+    )?;
 
     Ok(())
 }
