@@ -140,7 +140,7 @@ struct Cli {
     file_type: Option<FileType>,
 }
 
-fn infer_search_mode(
+fn deduce_search_mode(
     target: &Option<String>,
     target_type: &Option<FileType>,
 ) -> Result<SearchMode> {
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
     let start_directory = cli.start_directory;
     let target_type = cli.file_type;
 
-    let search_mode = infer_search_mode(&target, &target_type)?;
+    let search_mode = deduce_search_mode(&target, &target_type)?;
 
     walk_directory(start_directory, &|entry: &ParsedEntry| match search_mode {
         SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
