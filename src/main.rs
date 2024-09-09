@@ -1,6 +1,7 @@
+use anyhow::Result;
 use clap::Parser;
 use std::fs::DirEntry;
-use anyhow::Result;
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -9,20 +10,44 @@ struct Cli {
     target: String,
 }
 
-fn dir_entry_path<'a>(dir_entry: &DirEntry) -> String {
-    dir_entry.path().into_os_string().into_string().unwrap()
+enum FileType {
+    Directory,
+    RegularFile,
+    SymLink,
 }
 
-fn visit_directory(directory: &str, callback: &dyn Fn(&DirEntry)) -> Result<()> {
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
+struct ParsedEntry {
+    file_type: FileType,
+    name: String,
+    path: String,
+}
 
-        if file_type.is_dir() {
-            let inner_directory = dir_entry_path(&entry);
-            visit_directory(&inner_directory, callback)?;
-        } else {
-            callback(&entry);
+impl From<DirEntry> for ParsedEntry {
+    fn from(entry: DirEntry) -> Self {
+        let file_type = entry.file_type().unwrap();
+        let file_type = match (file_type.is_dir(), file_type.is_file(), file_type.is_symlink()) {
+            (true, false, false) => FileType::Directory,
+            (false, true, false) => FileType::RegularFile,
+            (false, false, true) => FileType::SymLink,
+            _ => unreachable!(),
+        };
+
+        Self {
+            file_type,
+            name: entry.file_name().into_string().unwrap(),
+            path: entry.path().into_os_string().into_string().unwrap(),
+        }
+    }
+}
+
+
+fn walk_directory<T: AsRef<Path>>(directory: T, callback: &dyn Fn(&ParsedEntry)) -> Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = ParsedEntry::from(entry?);
+
+        match entry.file_type {
+            FileType::Directory => walk_directory(entry.path, callback)?,
+            FileType::RegularFile | FileType::SymLink => callback(&entry),
         }
     }
 
@@ -36,11 +61,9 @@ fn main() -> Result<()> {
 
     // Now we need to walk the current working directory
     // and try to find any file that matches target.
-    visit_directory(".", &|entry: &DirEntry| {
-        let file_name = entry.file_name();
-        let path = dir_entry_path(entry);
-        if file_name == *target {
-            println!("Found {target} in {path}");
+    walk_directory(".", &|entry: &ParsedEntry | {
+        if entry.name == *target {
+            println!( "Found {} in {}", target, entry.path);
         }
     })?;
 
