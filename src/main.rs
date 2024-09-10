@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use std::ffi::OsStr;
 use std::fs::DirEntry;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ enum FileType {
 
     #[clap(name = "file")]
     RegularFile,
-    
+
     #[clap(name = "link")]
     SymLink,
 
@@ -85,13 +86,13 @@ impl TryFrom<DirEntry> for ParsedEntry {
 
 fn walk_directory<T: AsRef<Path>>(
     directory: T,
-    excludes: &Option<Vec<PathBuf>>,
+    avoids: &Option<Vec<PathBuf>>,
     callback: &dyn Fn(&ParsedEntry),
 ) -> Result<()> {
     'outer: for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::try_from(entry?)?;
 
-        if let Some(excludes) = excludes {
+        if let Some(excludes) = avoids {
             for exclude in excludes {
                 let lhs = std::fs::canonicalize(&entry.path)?;
                 let rhs = std::fs::canonicalize(exclude)?;
@@ -103,7 +104,7 @@ fn walk_directory<T: AsRef<Path>>(
 
         callback(&entry);
         if entry.file_type == FileType::Directory {
-            walk_directory(entry.path, excludes, callback)?;
+            walk_directory(entry.path, avoids, callback)?;
         }
     }
 
@@ -114,6 +115,7 @@ enum SearchMode {
     Target,
     Type,
     TargetAndType,
+    Extension,
 }
 
 fn match_target(target: &String, entry: &ParsedEntry) {
@@ -133,6 +135,25 @@ fn match_type(target_type: &FileType, entry: &ParsedEntry) {
             entry.name,
             entry.display_path.to_str().unwrap()
         );
+    }
+}
+
+fn extension_from_path(path: &String) -> Option<&str> {
+    Path::new(path).extension().and_then(OsStr::to_str)
+}
+
+fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
+    let target_extension = extension_from_path(&entry.path);
+    if let Some(target_extension) = target_extension {
+        for extension in extensions {
+            if extension == target_extension {
+                println!(
+                    "Found {} in {}",
+                    entry.name,
+                    entry.display_path.to_str().unwrap()
+                );
+            }
+        }
     }
 }
 
@@ -161,18 +182,24 @@ struct Cli {
     file_type: Option<FileType>,
 
     /// Directories to avoid
-    #[clap(name = "exclude", long, short, num_args = 0.., value_delimiter = ' ')]
-    excludes: Option<Vec<PathBuf>>,
+    #[clap(name = "avoid", long, short, num_args = 0.., value_delimiter = ' ')]
+    avoids: Option<Vec<PathBuf>>,
+
+    /// Extension to look for (without .)
+    #[clap(name = "extension", long, short, num_args = 0.., value_delimiter = ' ')]
+    extensions: Option<Vec<String>>,
 }
 
 fn deduce_search_mode(
     target: &Option<String>,
     target_type: &Option<FileType>,
+    extensions: &Option<Vec<String>>,
 ) -> Result<SearchMode> {
-    match (target, target_type) {
-        (Some(_), None) => return Ok(SearchMode::Target),
-        (None, Some(_)) => return Ok(SearchMode::Type),
-        (Some(_), Some(_)) => return Ok(SearchMode::TargetAndType),
+    match (target, target_type, extensions) {
+        (Some(_), None, ..) => return Ok(SearchMode::Target),
+        (None, Some(_), ..) => return Ok(SearchMode::Type),
+        (.., Some(_)) => return Ok(SearchMode::Extension),
+        (Some(_), Some(_), ..) => return Ok(SearchMode::TargetAndType),
         _ => {
             return Err(anyhow::anyhow!(
                 "Either a target to find or a file type to search must be specified"
@@ -182,9 +209,9 @@ fn deduce_search_mode(
 }
 
 // TODO:
-//   #1: Extension matching
 //   #2: Raw output to be able to do command piping?
-//   #4: Maximum recursion depth
+//   #3: Maximum recursion depth
+//   #4: Regex Matching
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -192,16 +219,18 @@ fn main() -> Result<()> {
     let target = cli.target;
     let start_directory = cli.start_directory;
     let target_type = cli.file_type;
-    let excludes = cli.excludes;
+    let avoids = cli.avoids;
+    let extensions = cli.extensions;
 
-    let search_mode = deduce_search_mode(&target, &target_type)?;
+    let search_mode = deduce_search_mode(&target, &target_type, &extensions)?;
 
     walk_directory(
         start_directory,
-        &excludes,
+        &avoids,
         &|entry: &ParsedEntry| match search_mode {
             SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
             SearchMode::Type => match_type(&target_type.unwrap(), entry),
+            SearchMode::Extension => match_extensions(&extensions.as_ref().unwrap(), entry),
             SearchMode::TargetAndType => {
                 match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
             }
