@@ -156,8 +156,8 @@ struct Cli {
     target: Option<String>,
 
     /// Directory from where to start searching
-    #[clap(default_value = ".")]
-    start_directory: String,
+    #[clap(name = "from", long, short)]
+    start_directory: Option<String>,
 
     /// File type to look for
     #[clap(name = "type", long, short, value_enum)]
@@ -206,8 +206,9 @@ fn main() -> Result<()> {
         SearchMode::TargetAndType => match_target_and_type(&args.target, &args.file_type, entry),
     };
 
+    let start_directory = args.start_directory.unwrap_or(".".to_owned());
     let depth = args.depth.unwrap_or(std::usize::MAX);
-    walk_directory(args.start_directory, &args.avoids, depth, &dispatcher)?;
+    walk_directory(start_directory, &args.avoids, depth, &dispatcher)?;
 
     Ok(())
 }
