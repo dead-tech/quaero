@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use regex::Regex;
 use std::ffi::OsStr;
 use std::fs::DirEntry;
 use std::os::unix::fs::PermissionsExt;
@@ -109,6 +110,7 @@ enum SearchMode {
     Type,
     TargetAndType,
     Extension,
+    Regex,
 }
 
 fn match_target(target: &String, entry: &ParsedEntry) {
@@ -135,6 +137,13 @@ fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
                 println!("{}", entry.path);
             }
         }
+    }
+}
+
+fn match_regex(regex: &Regex, entry: &ParsedEntry) {
+    let path = &entry.path;
+    if regex.is_match(path) {
+        println!("{}", path);
     }
 }
 
@@ -169,17 +178,22 @@ struct Cli {
     /// How many nested subdirectories to walk into
     #[clap(name = "depth", long, short)]
     depth: Option<usize>,
+
+    #[clap(name = "regex", long, short)]
+    regex: Option<Regex>,
 }
 
 fn deduce_search_mode(
     target: &Option<String>,
     target_type: &Option<FileType>,
     extensions: &Option<Vec<String>>,
+    regex: &Option<Regex>,
 ) -> Result<SearchMode> {
-    match (target, target_type, extensions) {
+    match (target, target_type, extensions, regex) {
         (Some(_), None, ..) => return Ok(SearchMode::Target),
         (None, Some(_), ..) => return Ok(SearchMode::Type),
-        (.., Some(_)) => return Ok(SearchMode::Extension),
+        (.., Some(_), _) => return Ok(SearchMode::Extension),
+        (.., Some(_)) => return Ok(SearchMode::Regex),
         (Some(_), Some(_), ..) => return Ok(SearchMode::TargetAndType),
         _ => {
             return Err(anyhow::anyhow!(
@@ -188,9 +202,6 @@ fn deduce_search_mode(
         }
     }
 }
-
-// TODO:
-//   #4: Regex Matching
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -201,8 +212,9 @@ fn main() -> Result<()> {
     let avoids = cli.avoids;
     let extensions = cli.extensions;
     let depth = cli.depth.unwrap_or(std::usize::MAX);
+    let regex = cli.regex;
 
-    let search_mode = deduce_search_mode(&target, &target_type, &extensions)?;
+    let search_mode = deduce_search_mode(&target, &target_type, &extensions, &regex)?;
 
     walk_directory(
         start_directory,
@@ -212,6 +224,7 @@ fn main() -> Result<()> {
             SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
             SearchMode::Type => match_type(&target_type.unwrap(), entry),
             SearchMode::Extension => match_extensions(&extensions.as_ref().unwrap(), entry),
+            SearchMode::Regex => match_regex(&regex.as_ref().unwrap(), entry),
             SearchMode::TargetAndType => {
                 match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
             }
