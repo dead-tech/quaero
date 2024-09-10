@@ -6,10 +6,6 @@ use std::fs::DirEntry;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-enum FileModeMask {
-    Executable = 0o111,
-}
-
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FileType {
     #[clap(name = "dir")]
@@ -26,31 +22,31 @@ enum FileType {
 }
 
 impl TryFrom<&DirEntry> for FileType {
+    type Error = anyhow::Error;
+
     fn try_from(entry: &DirEntry) -> Result<Self> {
         let file_type = entry.file_type()?;
 
-        let mut file_type = match (
-            file_type.is_dir(),
-            file_type.is_file(),
-            file_type.is_symlink(),
-        ) {
-            (true, false, false) => FileType::Directory,
-            (false, true, false) => FileType::RegularFile,
-            (false, false, true) => FileType::SymLink,
-            _ => unreachable!(),
-        };
+        let is_dir = file_type.is_dir();
+        let is_file = file_type.is_file();
+        let is_symlink = file_type.is_symlink();
 
         let permissions = entry.metadata()?.permissions();
-        if file_type != FileType::Directory
-            && permissions.mode() & FileModeMask::Executable as u32 != 0
-        {
-            file_type = FileType::Executable;
-        }
+        let executable_mask = 0o111;
+        let is_executable = permissions.mode() & executable_mask != 0;
+
+        let file_type = match (is_dir, is_file, is_symlink) {
+            (true, ..) => FileType::Directory,
+            (_, true, _) if !is_executable => FileType::RegularFile,
+            (.., true) if !is_executable => FileType::SymLink,
+            (false, ..) if is_executable => FileType::Executable,
+            _ => unreachable!(
+                "a file can be either one of these: directory, regular file, symbolic link"
+            ),
+        };
 
         Ok(file_type)
     }
-
-    type Error = anyhow::Error;
 }
 
 struct ParsedEntry {
@@ -77,7 +73,7 @@ fn walk_directory<T: AsRef<Path>>(
     directory: T,
     avoids: &Option<Vec<PathBuf>>,
     depth: usize,
-    callback: &dyn Fn(&ParsedEntry),
+    callback: &impl Fn(&ParsedEntry),
 ) -> Result<()> {
     if depth <= 0 {
         return Ok(());
@@ -113,26 +109,22 @@ enum SearchMode {
     Regex,
 }
 
-fn match_target(target: &String, entry: &ParsedEntry) {
-    if entry.name == *target {
+fn match_target(target: &Option<String>, entry: &ParsedEntry) {
+    if entry.name == target.as_deref().unwrap() {
         println!("{}", entry.path);
     }
 }
 
-fn match_type(target_type: &FileType, entry: &ParsedEntry) {
-    if entry.file_type == *target_type {
+fn match_type(target_type: &Option<FileType>, entry: &ParsedEntry) {
+    if entry.file_type == target_type.unwrap() {
         println!("{}", entry.path);
     }
 }
 
-fn extension_from_path(path: &String) -> Option<&str> {
-    Path::new(path).extension().and_then(OsStr::to_str)
-}
-
-fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
-    let target_extension = extension_from_path(&entry.path);
+fn match_extensions(extensions: &Option<Vec<String>>, entry: &ParsedEntry) {
+    let target_extension = Path::new(&entry.path).extension().and_then(OsStr::to_str);
     if let Some(target_extension) = target_extension {
-        for extension in extensions {
+        for extension in extensions.as_deref().unwrap() {
             if extension == target_extension {
                 println!("{}", entry.path);
             }
@@ -140,15 +132,19 @@ fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
     }
 }
 
-fn match_regex(regex: &Regex, entry: &ParsedEntry) {
+fn match_regex(regex: &Option<Regex>, entry: &ParsedEntry) {
     let path = &entry.path;
-    if regex.is_match(path) {
+    if regex.as_ref().unwrap().is_match(path) {
         println!("{}", path);
     }
 }
 
-fn match_target_and_type(target: &String, target_type: &FileType, entry: &ParsedEntry) {
-    if entry.name == *target && entry.file_type == *target_type {
+fn match_target_and_type(
+    target: &Option<String>,
+    target_type: &Option<FileType>,
+    entry: &ParsedEntry,
+) {
+    if entry.name == *target.as_deref().unwrap() && entry.file_type == target_type.unwrap() {
         println!("{}", entry.path);
     }
 }
@@ -183,13 +179,8 @@ struct Cli {
     regex: Option<Regex>,
 }
 
-fn deduce_search_mode(
-    target: &Option<String>,
-    target_type: &Option<FileType>,
-    extensions: &Option<Vec<String>>,
-    regex: &Option<Regex>,
-) -> Result<SearchMode> {
-    match (target, target_type, extensions, regex) {
+fn deduce_search_mode(args: &Cli) -> Result<SearchMode> {
+    match (&args.target, args.file_type, &args.extensions, &args.regex) {
         (Some(_), None, ..) => return Ok(SearchMode::Target),
         (None, Some(_), ..) => return Ok(SearchMode::Type),
         (.., Some(_), _) => return Ok(SearchMode::Extension),
@@ -204,32 +195,19 @@ fn deduce_search_mode(
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let args = Cli::parse();
 
-    let target = cli.target;
-    let start_directory = cli.start_directory;
-    let target_type = cli.file_type;
-    let avoids = cli.avoids;
-    let extensions = cli.extensions;
-    let depth = cli.depth.unwrap_or(std::usize::MAX);
-    let regex = cli.regex;
+    let search_mode = deduce_search_mode(&args)?;
+    let dispatcher = |entry: &ParsedEntry| match search_mode {
+        SearchMode::Target => match_target(&args.target, entry),
+        SearchMode::Type => match_type(&args.file_type, entry),
+        SearchMode::Extension => match_extensions(&args.extensions, entry),
+        SearchMode::Regex => match_regex(&args.regex, entry),
+        SearchMode::TargetAndType => match_target_and_type(&args.target, &args.file_type, entry),
+    };
 
-    let search_mode = deduce_search_mode(&target, &target_type, &extensions, &regex)?;
-
-    walk_directory(
-        start_directory,
-        &avoids,
-        depth,
-        &|entry: &ParsedEntry| match search_mode {
-            SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
-            SearchMode::Type => match_type(&target_type.unwrap(), entry),
-            SearchMode::Extension => match_extensions(&extensions.as_ref().unwrap(), entry),
-            SearchMode::Regex => match_regex(&regex.as_ref().unwrap(), entry),
-            SearchMode::TargetAndType => {
-                match_target_and_type(target.as_ref().unwrap(), &target_type.unwrap(), entry)
-            }
-        },
-    )?;
+    let depth = args.depth.unwrap_or(std::usize::MAX);
+    walk_directory(args.start_directory, &args.avoids, depth, &dispatcher)?;
 
     Ok(())
 }
