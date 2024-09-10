@@ -1,3 +1,5 @@
+![build](https://github.com/dead-tech/quaero/actions/workflows/build.yml/badge.svg)
+
 # quaero
 quaero is supposed to be a replacement to the find command available on Linux systems.
 
