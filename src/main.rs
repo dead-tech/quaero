@@ -56,7 +56,6 @@ struct ParsedEntry {
     file_type: FileType,
     name: String,
     path: String,
-    display_path: PathBuf,
 }
 
 impl TryFrom<DirEntry> for ParsedEntry {
@@ -65,21 +64,10 @@ impl TryFrom<DirEntry> for ParsedEntry {
     fn try_from(entry: DirEntry) -> Result<Self> {
         let file_type = FileType::try_from(&entry)?;
 
-        let display_path = match file_type {
-            FileType::Directory => {
-                let path = entry.path();
-                let mut components = path.components();
-                components.next_back();
-                components.as_path().to_path_buf()
-            }
-            _ => entry.path(),
-        };
-
         Ok(Self {
             file_type,
             name: entry.file_name().into_string().unwrap(),
             path: entry.path().into_os_string().into_string().unwrap(),
-            display_path,
         })
     }
 }
@@ -125,21 +113,13 @@ enum SearchMode {
 
 fn match_target(target: &String, entry: &ParsedEntry) {
     if entry.name == *target {
-        println!(
-            "Found {} in {}",
-            target,
-            entry.display_path.to_str().unwrap()
-        );
+        println!("{}", entry.path);
     }
 }
 
 fn match_type(target_type: &FileType, entry: &ParsedEntry) {
     if entry.file_type == *target_type {
-        println!(
-            "Found {} in {}",
-            entry.name,
-            entry.display_path.to_str().unwrap()
-        );
+        println!("{}", entry.path);
     }
 }
 
@@ -152,11 +132,7 @@ fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
     if let Some(target_extension) = target_extension {
         for extension in extensions {
             if extension == target_extension {
-                println!(
-                    "Found {} in {}",
-                    entry.name,
-                    entry.display_path.to_str().unwrap()
-                );
+                println!("{}", entry.path);
             }
         }
     }
@@ -164,11 +140,7 @@ fn match_extensions(extensions: &Vec<String>, entry: &ParsedEntry) {
 
 fn match_target_and_type(target: &String, target_type: &FileType, entry: &ParsedEntry) {
     if entry.name == *target && entry.file_type == *target_type {
-        println!(
-            "Found {} in {}",
-            target,
-            entry.display_path.to_str().unwrap()
-        );
+        println!("{}", entry.path);
     }
 }
 
@@ -218,7 +190,6 @@ fn deduce_search_mode(
 }
 
 // TODO:
-//   #2: Raw output to be able to do command piping?
 //   #4: Regex Matching
 
 fn main() -> Result<()> {
