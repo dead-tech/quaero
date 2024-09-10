@@ -87,8 +87,13 @@ impl TryFrom<DirEntry> for ParsedEntry {
 fn walk_directory<T: AsRef<Path>>(
     directory: T,
     avoids: &Option<Vec<PathBuf>>,
+    depth: usize,
     callback: &dyn Fn(&ParsedEntry),
 ) -> Result<()> {
+    if depth <= 0 {
+        return Ok(());
+    }
+
     'outer: for entry in std::fs::read_dir(directory)? {
         let entry = ParsedEntry::try_from(entry?)?;
 
@@ -104,7 +109,7 @@ fn walk_directory<T: AsRef<Path>>(
 
         callback(&entry);
         if entry.file_type == FileType::Directory {
-            walk_directory(entry.path, avoids, callback)?;
+            walk_directory(entry.path, avoids, depth - 1, callback)?;
         }
     }
 
@@ -188,6 +193,10 @@ struct Cli {
     /// Extension to look for (without .)
     #[clap(name = "extension", long, short, num_args = 0.., value_delimiter = ' ')]
     extensions: Option<Vec<String>>,
+
+    /// How many nested subdirectories to walk into
+    #[clap(name = "depth", long, short)]
+    depth: Option<usize>,
 }
 
 fn deduce_search_mode(
@@ -210,7 +219,6 @@ fn deduce_search_mode(
 
 // TODO:
 //   #2: Raw output to be able to do command piping?
-//   #3: Maximum recursion depth
 //   #4: Regex Matching
 
 fn main() -> Result<()> {
@@ -221,12 +229,14 @@ fn main() -> Result<()> {
     let target_type = cli.file_type;
     let avoids = cli.avoids;
     let extensions = cli.extensions;
+    let depth = cli.depth.unwrap_or(std::usize::MAX);
 
     let search_mode = deduce_search_mode(&target, &target_type, &extensions)?;
 
     walk_directory(
         start_directory,
         &avoids,
+        depth,
         &|entry: &ParsedEntry| match search_mode {
             SearchMode::Target => match_target(&target.as_ref().unwrap(), entry),
             SearchMode::Type => match_type(&target_type.unwrap(), entry),
